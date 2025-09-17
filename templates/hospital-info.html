@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>HealthSentinel - Hospitals</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+    .card:hover { transform: translateY(-4px); transition: 0.3s ease; }
+    .line-clamp-3 {
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .leaflet-pane,
+    .leaflet-control {
+      z-index: 10 !important;
+    }
+    #hospitalModal {
+      z-index: 1000 !important;
+    }
+    #zoomHint {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0, 0, 0, 0.6);
+      color: white;
+      padding: 12px 18px;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      text-align: center;
+      z-index: 500;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.6s ease-in-out;
+    }
+    #zoomHint.show { opacity: 1; }
+
+    /* Autocomplete dropdown */
+    #autocomplete-list {
+    position: absolute;
+    top: 100%;   /* directly below input */
+    left: 0;     /* align with input */
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    width: inherit;
+    width: 100%;   /* match input width */
+    max-height: 220px;
+    overflow-y: auto;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    z-index: 1000; /* ensure above everything */
+    }
+
+    .autocomplete-item {
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+    .autocomplete-item:hover,
+    .autocomplete-item.active {
+      background: #f0f0f0;
+    }
+    .autocomplete-history {
+      font-size: 0.9em;
+      color: #555;
+    }
+    .autocomplete-item {
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+    .autocomplete-item:hover,
+    .autocomplete-item.active {
+      background: #e8f0fe; /* Google-like blue highlight */
+    }
+    .autocomplete-item span {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    } 
+  </style>
+</head>
+<body class="bg-gray-50 text-gray-800">
+
+  <!-- Navbar -->
+  <nav class="bg-gradient-to-r from-blue-600 to-blue-800 text-white shadow-md">
+    <div class="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
+      <h1 class="text-2xl font-bold">🏥 HealthSentinel</h1>
+      <div class="space-x-6">
+        <a href="{{ url_for('index') }}"  class="hover:text-gray-200 transition">Home</a>
+        <a href="#map" class="hover:text-gray-200 transition">Map</a>
+        <a href="#hospitals" class="hover:text-gray-200 transition">Hospitals</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <section class="text-center py-12 bg-gradient-to-r from-blue-50 to-blue-100">
+    <h2 class="text-4xl font-bold mb-4">Private Hospitals in Kuala Lumpur</h2>
+    <p class="text-lg text-gray-600">Explore hospitals, view details, and find the nearest one to you.</p>
+    <div class="mt-6 flex justify-center space-x-4 relative">
+      <div class="relative">
+        <input id="locationInput" type="text" placeholder="Enter your location..." 
+               class="px-4 py-2 rounded-lg border border-gray-300 shadow-sm w-72 focus:ring-2 focus:ring-blue-500 focus:outline-none"/>
+          <!-- Dropdown-->
+        <div id="autocomplete-list"></div>
+    </div>
+  <!-- Clear button always visible -->
+  <button id="clearBtn" class="px-4 py-2 bg-red-500 text-white rounded-lg shadow hover:bg-red-600">
+    Clear
+  </button>
+  <button id="searchBtn" class="px-5 py-2 bg-green-600 text-white rounded-lg shadow hover:bg-green-700 transition">
+    🔍 Search
+  </button>
+  <button id="locateBtn" class="px-5 py-2 bg-blue-600 text-white rounded-lg shadow hover:bg-blue-700 transition">
+    📍 Use My Location
+  </button>
+  </section>
+
+  <!-- Map -->
+  <section id="mapSection" class="relative max-w-7xl mx-auto px-6 py-10">
+    <h3 class="text-2xl font-semibold mb-4">Hospital Locations</h3>
+    <div class="relative">
+      <div id="map" class="h-[500px] w-full rounded-lg shadow-lg"></div>
+      <div id="zoomHint">Use <b>Shift + scroll</b> to zoom the map</div>
+    </div>
+    <div id="nearestHospital" class="mt-4 p-4 bg-white rounded-lg shadow text-gray-700">
+      <b>Nearest Hospital:</b> <span id="hospitalInfo">Not selected</span>
+    </div>
+  </section>
+
+  <!-- Hospital Cards -->
+  <section id="hospitals" class="max-w-7xl mx-auto px-6 py-12">
+    <h3 class="text-2xl font-semibold mb-6">Hospitals List</h3>
+    <div class="grid md:grid-cols-3 gap-8" id="hospitalCards"></div>
+  </section>
+
+  <!-- Modal -->
+  <div id="hospitalModal" class="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center hidden">
+    <div class="bg-white rounded-xl shadow-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6 relative">
+      <button id="closeModal" class="sticky top-3 float-right text-gray-600 hover:text-red-600 text-2xl font-bold">&times;</button>
+      <img id="modalImg" src="" alt="" class="w-full h-60 object-cover rounded-lg mb-4">
+      <h3 id="modalName" class="text-2xl font-bold mb-2"></h3>
+      <p id="modalAddress" class="text-gray-600 mb-3"></p> 
+      <p id="modalRating" class="text-lg text-yellow-600 mb-3"></p>
+      <p id="modalPhone" class="text-md text-gray-700 mb-3"></p>
+      <ul id="modalSpecialty" class="list-disc pl-5 text-gray-700 mb-4"></ul>
+      <a id="modalWebsite" href="#" target="_blank" class="text-blue-600 hover:underline hidden">Visit Website</a>
+    </div>
+  </div>
+
+  <script>
+  // --- HOSPITAL DATA (unchanged) ---
+  const hospitals = [
+    { name: "KPJ Damansara 2", 
+      address: "1, Jalan Bukit Lanjan 3, Bukit Lanjan, 60000 Kuala Lumpur, Wilayah Persekutuan Kuala Lumpur", 
+      lat: 3.1711399588499427, lon: 101.61834000798397, 
+      rating: 4.8,
+      specialty: "Multi-specialty • Anaesthesiology & Critical Care • Cardiology & Interventional Cardiology • Neurology & Neurosurgery • Obstetrics & Gynaecology • Neonatology & Paediatrics • Orthopaedic Surgery • Plastic & Reconstructive Surgery • Urology • General & Gastrointestinal Surgery • Rehabilitation Medicine",
+      img: "/static/images/kpjdamansara2.jpg", 
+      website: "https://www.kpjhealth.com.my/damansara2/" ,
+      phone: "+603-7717 3000"
+    },
+
+    { name: "Gleneagles Hospital KL", 
+      lat: 3.161349071945951, lon: 101.73944144605628, 
+      address: "282, 286 & 288 Block A, B and Medical Office Block, Jln Ampang, Kampung Berembang, 50450 Kuala Lumpur, Wilayah Persekutuan Kuala Lumpur",
+      rating: 4.4,
+      specialty: "Multi-specialty • Anaesthesiology • Breast & Endocrine Surgery • Cardiology & Cardiothoracic Surgery • Dermatology • ENT • Endocrinology & Diabetes • Gastroenterology & Hepatology • General Surgery • Infectious Diseases • Nephrology • Neurosurgery • Obstetrics & Gynaecology • Oncology • Ophthalmology • Orthopaedic & Spine Surgery • Paediatric Surgery & Paediatrics • Plastic & Reconstructive Surgery • Psychiatry & Psychology • Respiratory Medicine • Vascular Surgery",
+      img: "/static/images/gleneagles.jpg", 
+      website: "https://gleneagles.com.my/kuala-lumpur" ,
+      phone: "+603-4141 3000"
+    },
+
+    { name: "Prince Court Medical Centre", 
+      lat: 3.1491310895308784, lon: 101.72246306081158, 
+      address: "39, Jalan Kia Peng, Kuala Lumpur, 50450 Kuala Lumpur, Wilayah Persekutuan Kuala Lumpur",
+      rating: 4.5,
+      specialty: "Multi-specialty • Women & Children • Heart & Lung • Bone & Joint • Cancer Care • Nephrology & Renal Transplant • Plastic & Reconstructive Surgery (Burns Unit) • Diagnostics & Imaging • General & Minimally Invasive Surgery • Orthopaedics • Urology",
+      img: "/static/images/princecourt.jpg", 
+      website: "https://princecourt.com/" ,
+      phone: "+603-2160 0000"
+    },
+
+    { name: "Pantai Hospital KL", 
+      lat: 3.1198330391424482, lon: 101.66731603441076, 
+      address: "8, Jalan Bukit Pantai, Bangsar, 59100 Kuala Lumpur, Wilayah Persekutuan Kuala Lumpur",
+      rating: 4.4,
+      specialty: "Multi-specialty • Oncology • Cardiology • Neurology & Neurosurgery • Orthopaedics • Obstetrics & Gynaecology & Paediatrics • General & Upper GI Surgery • Eye & ENT • Endocrinology (Diabetes & Hormones) • Renal / Nephrology • Burns & Plastic / Reconstructive Surgery • Geriatric Medicine • Mental Health / Psychiatry • Sports Medicine",
+      img: "/static/images/pantaihospitalkl.jpg", 
+      website: "https://www.pantai.com.my/kuala-lumpur/ms",
+      phone: "+603-2160 0000"
+    },
+
+    { name: "OHANA Specialist Hospital", 
+      lat: 3.1964106303759205, lon: 101.72820089762668, 
+      address: "No 9, Jln Seri Rejang, Rampai Business Park South, Setapak Jaya, 53300 Kuala Lumpur, Federal Territory of Kuala Lumpur",
+      rating: 4.5,
+      specialty: "Women & Child Specialist Hospital • Obstetrics & Gynaecology • Paediatrics • Maternity Packages • 24/7 Emergency • Admission & Outpatient Women-&-Paediatric Care",
+      img: "/static/images/ohana.jpg", 
+      website: "https://princecourt.com" ,
+      phone:  "+603-4131 2039"
+    },
+
+    { name: "KPJ Sentosa KL Specialist Hospital", 
+      lat: 3.1711884946012736, lon: 101.6974896613981, 
+      address: "Kompleks Damai, 36, Jalan Chemur, Titiwangsa Sentral, 50400 Wilayah Persekutuan, Wilayah Persekutuan Kuala Lumpur",
+      rating: 4.8,
+      specialty: "Multi-specialty • Cardiology & Cardiovascular Surgery • Gastroenterology • Neurology & Neurosurgery • Oncology / Cancer Care • Orthopaedics • Gynaecology & Women’s Health • Paediatrics • 24/7 Accident & Emergency • Diagnostic & Imaging Services",
+      img: "/static/images/kpjsentosa.jpg", 
+      website: "https://kpjhealth.com.my/sentosa" ,
+      phone: "+603-4043 7166"
+    },
+
+    { name: "Columbia Asia Hospital - Bukit Jalil", 
+      lat: 3.058565749326648, lon: 101.68801478598081, 
+      address: "No.9, Jalan Jalil Perkasa 7, Bukit Jalil, 57000 Kuala Lumpur, Wilayah Persekutuan Kuala Lumpur",
+      rating: 4.8,
+      specialty: "Multi-specialty • Anesthesiology • Breast & Endocrine Surgery • Cardiology • Dentistry • Dermatology • ENT (Ear, Nose & Throat) • Emergency Medicine • Endocrinology • Haematology • Nephrology • Neurology & Neurosurgery • Obstetrics & Gynaecology • Ophthalmology • Orthopaedics & Sports Medicine • Pediatrics & Pediatric Surgery • Oncology • Radiology • Respiratory Medicine • Urology • General & Upper Gastrointestinal Surgery • Rheumatology • Pain Management & Critical Care • Reproductive Medicine",
+      img: "/static/images/columbiaasia.jpg", 
+      website: "https://www.columbiaasia.com/malaysia/hospitals/bukit-jalil/" ,
+      phone: "+603-8657 9888"
+    },
+
+    { name: "Pantai Hospital Ampang", 
+      lat: 3.127913802495167, lon: 101.75261200927186, 
+      address:"Jalan Perubatan 1, Pandan Indah, 55100 Kuala Lumpur, Wilayah Persekutuan Kuala Lumpur",
+      rating: 4.8,
+      specialty: "Multi-specialty • Internal Medicine • General Surgery • Obstetrics & Gynaecology • Paediatrics • Ophthalmology • ENT (Ear, Nose & Throat) • Orthopaedic Surgery • Renal Medicine • Gastroenterology • Respiratory Medicine • Urology • Bariatric Surgery",
+      img: "/static/images/pantaihospitalampang.jpg", 
+      website: "https://www.pantai.com.my/ampang/ms" ,
+      phone: "+603-4289 2828"
+    },
+
+    { name: "KMI Taman Desa Medical Centre", 
+      lat: 3.0960202573511455, lon: 101.67795980982757, 
+      address: "45, Jalan Desa, Off, Old Klang Rd, Taman Desa, 58100 Kuala Lumpur",
+      rating: 4.6,
+      specialty: "Multi-specialty • Anaesthesiology • ENT, Head & Neck • Dermatology • General Surgery • Internal Medicine • Obstetrics & Gynaecology • Ophthalmology • Orthopaedics & Trauma Surgery • Paediatrics • Psychiatry • Radiology • Urology • Laparoscopic Surgery",
+      img: "/static/images/kmitamandesa.jpg", 
+      website: "https://kmihealthcare.com/en/kmitamandesa" ,
+      phone: "+603-7982 6500"
+    },
+
+    { name: "Pantai Hospital Cheras", 
+      lat: 3.102706901745289, lon: 101.74094851167591, 
+      address: "1, Jalan 1/96a, Taman Cheras Makmur, 56100 Cheras, Wilayah Persekutuan Kuala Lumpur",
+      rating: 4.7,
+      specialty: "Multi-specialty • Bones & Joints (Orthopaedics) • Brain, Nerves & Spine Surgery (Neurosurgery) • Diabetes & Hormone (Endocrinology) • Digestive System (Gastroenterology & Hepatology) • Ear, Nose & Throat (ENT) • Eyes (Ophthalmology) • General Surgery • Heart & Vascular (Cardiology / Vascular) • Maternity Care / Obstetrics & Gynaecology • Paediatric Care • Renal Medicine • Respiratory Medicine • Urology / Urinary & Male Reproductive System",
+      img: "/static/images/pantaihospitalcheras.jpg", 
+      website: "https://www.pantai.com.my/cheras/ms" ,
+      phone: "+603-9145 2888"
+    },
+
+    { name: "ParkCity Medical Centre", 
+      lat: 3.1893178967859557, lon: 101.63847530982785, 
+      address: "2, Jalan Intisari, Desa Parkcity, 52200 Kuala Lumpur, Wilayah Persekutuan Kuala Lumpur",
+      rating: 4.2,
+      specialty: "Multi-specialty • Anaesthesiology • Breast Surgery • Cardiology • Colorectal Surgery • Diagnostic Imaging & Radiology (MRI, CT, Ultrasound) • General Surgery • Orthopaedics • Urology • Plastic & Reconstructive Surgery • ENT",
+      img: "/static/images/pmc.jpg", 
+      website: "https://parkcitymedicalcentre.com/" ,
+      phone: "+603-5639 1616"
+    },
+
+    { name: "Sunway Medical Centre Velocity (SMCV)", 
+      lat: 3.128652082606457, lon: 101.72207057093595, 
+      address: "Pusat Perubatan Sunway Velocity, Lingkaran SV2, Sunway Velocity, 55100 Kuala Lumpur, Wilayah Persekutuan Kuala Lumpur",
+      rating: 4.5,
+      specialty: "Multi-specialty tertiary hospital • Emergency & 24-hour A&E • Women & Children Centre • Neuro Centre • Heart & Lung Centre • Orthopaedic Centre • General & Bariatric Surgery • Gastroenterology & Hepatology • Obstetrics & Gynaecology • Neonatology & Paediatrics • Urology • Vascular Surgery • Plastic & Reconstructive Surgery • ENT & Head & Neck • Ophthalmology • Oncology / Cancer Care",
+      img: "/static/images/smcv.jpg", 
+      website: "https://www.sunwaymedicalvelocity.com.my/en/" ,
+      phone: "+603-9772 9191"
+    },
+
+    { name: "KPJ Tawakkal KL Specialist Hospital", 
+      lat: 3.1769835338392056, lon: 101.69864239633425, 
+      address: "1, Jalan Pahang Barat, Pekeliling, 53000 Kuala Lumpur, Wilayah Persekutuan Kuala Lumpur",
+      rating: 4.4,
+      specialty: "Multi-specialty • Cardiology • Orthopaedics (Joint Replacement, Spine, Sports Medicine) • Neurology & Neurosurgery • General Surgery (Gastrointestinal & Hepatobiliary) • Obstetrics & Gynaecology • Paediatrics & Paediatric Surgery • ENT • Ophthalmology • Urology • Plastic & Reconstructive Surgery • Respiratory Medicine • Rheumatology • Rehabilitation & Therapy Services • Diagnostic Imaging & Laboratory • Accident & Emergency",
+      img: "/static/images/kpjtawakkal.jpg", 
+      website: "https://kpjhealth.com.my/tawakkal" ,
+      phone: "+603-4026 7777"
+    },
+
+    { name: "AI Islam Specialist Hospital", 
+      lat: 3.1636185968117485, lon: 101.70321393866331, 
+      address: "85, Jalan Raja Abdullah, Kampung Baru, 50300 Kuala Lumpur, Wilayah Persekutuan Kuala Lumpur",
+      rating: 4.4,
+      specialty: "General & Specialist care • Internal Medicine • Cardiology • Orthopaedics • Women & Children Health (Obstetrics & Gynaecology, Paediatrics) • Urology • ENT • Gastroenterology & Hepatobiliary • Nephrology • Ophthalmology • Oncology / Cancer Services • Surgery (General, Orthopaedic etc.)",
+      img: "/static/images/alislam.jpg", 
+      website: "https://www.al-islamhospital.com/" ,
+      phone: "+603-2693 1007"
+    },
+
+    { name: "Hospital Pakar Pusrawi KL", 
+      lat: 3.171103071252826, lon: 101.71003956749874, 
+      address: "Lot 149, Jln Tun Razak, Titiwangsa, 50400 Kuala Lumpur, Wilayah Persekutuan Kuala Lumpur",
+      rating: 4.3,
+      specialty: "Multi-specialist care • Anesthesiology • Cardiology • Chemical Pathology • Dermatology • Endocrinology • Gastroenterology & Hepatology • General Paediatrics • General Surgery • Geriatrics • Haematology • Neurosurgery • Obstetrics & Gynaecology • Ophthalmology • Orthopaedics • Otorhinolaryngology (ENT) • Paediatric Surgery • Plastic Surgery • Psychiatry • Radiology • Respiratory Medicine • Urology",
+      img: "/static/images/pusrawi.jpg", 
+      website: "https://pusrawi.com.my/" ,
+      phone: "+603-2687 5000"
+    },
+
+  ];
+
+  // --- MAP INIT ---
+  var map = L.map('map', { zoomControl: true, scrollWheelZoom: false }).setView([3.1390, 101.6869], 12);
+
+  // Shift + scroll zoom hint
+  const zoomHint = document.getElementById("zoomHint");
+  let hintTimeout = null;
+  map.getContainer().addEventListener("wheel", function (event) {
+    if (event.shiftKey) {
+      map.scrollWheelZoom.enable();
+      zoomHint.classList.remove("show");
+    } else {
+      map.scrollWheelZoom.disable();
+      zoomHint.classList.add("show");
+      clearTimeout(hintTimeout);
+      hintTimeout = setTimeout(() => zoomHint.classList.remove("show"), 2000);
+    }
+  });
+
+  // Google Map layers
+  var googleStreets = L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+    maxZoom: 20, subdomains: ['mt0','mt1','mt2','mt3'], attribution: '© Google Maps'
+  }).addTo(map);
+  var googleHybrid = L.tileLayer('https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+    maxZoom: 20, subdomains: ['mt0','mt1','mt2','mt3'], attribution: '© Google Maps'
+  });
+  var googleSatellite = L.tileLayer('https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+    maxZoom: 20, subdomains: ['mt0','mt1','mt2','mt3'], attribution: '© Google Maps'
+  });
+  L.control.layers({ "Street": googleStreets, "Hybrid": googleHybrid, "Satellite": googleSatellite }).addTo(map);
+
+  let userMarker = null;
+  let routeLine = null;
+
+  // --- Autocomplete with History ---
+  const input = document.getElementById("locationInput");
+  const list = document.getElementById("autocomplete-list");
+
+  let cachedResults = [];
+  let activeIndex = -1;
+
+  function highlightMatch(text, query) {
+    const regex = new RegExp(`(${query})`, "gi");
+    return text.replace(regex, "<b>$1</b>");
+  }
+
+ function renderList(data, isHistory = false) {
+  list.innerHTML = "";
+  cachedResults = data;
+  if (data.length === 0) { list.classList.add("hidden"); return; }
+
+  data.forEach((item, i) => {
+    const div = document.createElement("div");
+    div.className = "autocomplete-item flex flex-col px-3 py-2 " +
+                    (isHistory ? "autocomplete-history" : "");
+    if (i === activeIndex) div.classList.add("active");
+
+    if (isHistory) {
+      div.innerHTML = `
+        <div class="flex justify-between items-center w-full">
+          <span>🕑 ${item}</span>
+          <button class="text-red-500 hover:text-red-700 ml-2">❌</button>
+        </div>`;
+      div.querySelector("span").addEventListener("click", () => handleSearch(item, true));
+      div.querySelector("button").addEventListener("click", (e) => {
+        e.stopPropagation();
+        deleteHistory(item);
+        div.remove();
+      });
+    } else {
+      // Split Nominatim display_name into main + secondary
+      const parts = item.display_name.split(",");
+      const main = parts.shift();
+      const secondary = parts.join(",").trim();
+
+      div.innerHTML = `
+        <span class="font-medium truncate">${highlightMatch(main, input.value.trim())}</span>
+        <span class="text-sm text-gray-500 truncate">${secondary}</span>
+      `;
+      div.addEventListener("click", () => selectSuggestion(item));
+    }
+
+    list.appendChild(div);
+  });
+  list.classList.remove("hidden");
+}
+
+
+function deleteHistory(query) {
+  let history = JSON.parse(localStorage.getItem("searchHistory") || "[]");
+  history = history.filter(item => item !== query);
+  localStorage.setItem("searchHistory", JSON.stringify(history));
+}
+
+  function selectSuggestion(item) {
+    input.value = item.display_name;
+    saveSearch(input.value);
+    list.classList.add("hidden");
+    placeUserMarker(parseFloat(item.lat), parseFloat(item.lon));
+  }
+
+  function saveSearch(query) {
+    let history = JSON.parse(localStorage.getItem("searchHistory") || "[]");
+    if (!history.includes(query)) {
+      history.unshift(query);
+      if (history.length > 5) history.pop();
+      localStorage.setItem("searchHistory", JSON.stringify(history));
+    }
+  }
+
+  function showHistory() {
+    let history = JSON.parse(localStorage.getItem("searchHistory") || "[]");
+    if (history.length > 0) renderList(history, true);
+  }
+
+  function handleSearch(query, isHistory=false) {
+    if (!query) return;
+    fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=MY&viewbox=${KL_Selangor_BBOX}&bounded=1&q=${encodeURIComponent(query)}&accept-language=en`)
+     .then(res => res.json())
+      .then(data => {
+        if (data.length === 0) {
+         alert("Location not found in KL/Selangor.");
+         return;
+        }
+        selectSuggestion(data[0]);
+      });
+  }
+
+  input.addEventListener("input", () => {
+    const query = input.value.trim();
+    if (!query) { showHistory(); return; }
+
+  // --- CONFIG ---
+  const KL_Selangor_BBOX = "100.5,2.5,102.0,3.9"; 
+  // left, bottom, right, top (covers KL & Selangor only)
+  fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=5&countrycodes=MY&viewbox=${KL_Selangor_BBOX}&bounded=1&q=${encodeURIComponent(query)}&accept-language=en`)
+    .then(res => res.json())
+    .then(data => { activeIndex = -1; renderList(data); });
+  });
+
+
+
+  input.addEventListener("focus", () => {
+    if (input.value.trim() === "" && cachedResults.length === 0) {
+      showHistory();
+    } else if (cachedResults.length > 0) {
+      renderList(cachedResults);
+    }
+  });
+
+  input.addEventListener("keydown", (e) => {
+    const items = list.querySelectorAll(".autocomplete-item");
+    if (items.length === 0) return;
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      activeIndex = (activeIndex + 1) % items.length;
+      renderList(cachedResults);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      activeIndex = (activeIndex - 1 + items.length) % items.length;
+      renderList(cachedResults);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (activeIndex >= 0 && activeIndex < cachedResults.length) {
+        if (typeof cachedResults[activeIndex] === "string") {
+          handleSearch(cachedResults[activeIndex], true);
+        } else {
+          selectSuggestion(cachedResults[activeIndex]);
+        }
+      } else if (cachedResults.length > 0) {
+        if (typeof cachedResults[0] === "string") {
+          handleSearch(cachedResults[0], true);
+        } else {
+          selectSuggestion(cachedResults[0]);
+        }
+      }
+    }
+  });
+
+  document.addEventListener("click", (e) => {
+    if (e.target !== input && !list.contains(e.target)) list.classList.add("hidden");
+  });
+
+  // --- Clear Search button ---
+  const clearBtn = document.getElementById("clearBtn");
+
+  function resetSearch() {
+    input.value = "";
+    list.classList.add("hidden");
+
+    // ✅ clear search history
+    localStorage.removeItem("searchHistory");
+
+    // Reset map state
+    if (userMarker) { map.removeLayer(userMarker); userMarker = null; }
+   if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+    document.getElementById("hospitalInfo").innerText = "Not selected";
+  }
+
+  clearBtn.addEventListener("click", resetSearch);
+
+  // Press ESC to clear too
+  input.addEventListener("keydown", (e) => {
+   if (e.key === "Escape") resetSearch();
+  });
+
+  // --- Helper functions ---
+  function haversine(lat1, lon1, lat2, lon2) {
+    const R = 6371;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2)**2 +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon/2)**2;
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+  }
+
+  function findNearest(lat, lon) {
+    let nearest = null, minDist = Infinity;
+    hospitals.forEach(h => {
+      const dist = haversine(lat, lon, h.lat, h.lon);
+      if (dist < minDist) { minDist = dist; nearest = {...h, distance: dist.toFixed(2)}; }
+    });
+    return nearest;
+  }
+
+  function updateNearestInfo(h, userLatLng=null) {
+    let distText = "?";
+    if (userLatLng) {
+      const dist = haversine(userLatLng.lat, userLatLng.lng, h.lat, h.lon);
+      distText = dist.toFixed(2);
+    } else if (h.distance) {
+      distText = h.distance;
+    }
+    document.getElementById("hospitalInfo").innerText =
+      `${h.name} ⭐ ${h.rating} | ~${distText} km away`;
+  }
+
+
+  function drawRoute(from, to) {
+    if (routeLine) map.removeLayer(routeLine);
+    routeLine = L.polyline([from, to], {color: "blue", weight: 4, opacity: 0.7}).addTo(map);
+    map.fitBounds(routeLine.getBounds(), {padding: [50, 50]});
+  }
+
+  function placeUserMarker(lat, lon) {
+    if (userMarker) map.removeLayer(userMarker);
+    userMarker = L.marker([lat, lon], {
+      icon: L.icon({
+        iconUrl: "https://cdn-icons-png.flaticon.com/512/149/149060.png",
+        iconSize: [30, 30]
+      })
+    }).addTo(map).bindPopup("📍 Your location").openPopup();
+    map.setView([lat, lon], 14);
+    const nearest = findNearest(lat, lon);
+    updateNearestInfo(nearest);
+    drawRoute([lat, lon], [nearest.lat, nearest.lon]);
+  }
+
+  // --- Hospital Markers ---
+  hospitals.forEach(h => {
+    const marker = L.marker([h.lat, h.lon]).addTo(map)
+      .bindPopup(`<b>${h.name}</b><br>⭐ ${h.rating}`);
+    marker.on("click", () => {
+      if (userMarker) {
+        const userLatLng = userMarker.getLatLng();
+        drawRoute(userLatLng, [h.lat, h.lon]);
+        updateNearestInfo(h, userLatLng);
+      } else alert("Please select or search your location first.");
+    });
+  });
+
+  // --- Auto-open modal if hospital name is in URL ---
+  const urlParams = new URLSearchParams(window.location.search);
+  const hospitalName = urlParams.get('hospital'); // e.g., ?hospital=KPJ%20Damansara%202
+
+  if (hospitalName) {
+    const hospital = hospitals.find(h => h.name === hospitalName);
+    if (hospital) showHospitalModal(hospital);
+  }
+
+
+  // --- Hospital Cards ---
+  const cardContainer = document.getElementById("hospitalCards");
+  hospitals.forEach(h => {
+    const card = document.createElement("div");
+    card.className = "card bg-white rounded-xl shadow-md overflow-hidden hover:shadow-lg transition relative cursor-pointer";
+    const previewText = h.specialty.length > 80 ? h.specialty.substring(0, 80) + "..." : h.specialty;
+    card.innerHTML = `
+      <img src="${h.img}" alt="${h.name}" class="h-40 w-full object-cover">
+      <div class="p-4">
+        <h3 class="font-bold text-lg mb-1">${h.name}</h3>
+        <p class="text-sm text-gray-600 mb-2 line-clamp-3">${previewText}</p>
+        <p class="mt-2 text-sm">⭐ ${h.rating} | 📍 Kuala Lumpur</p>
+         <p class="text-gray-700 mt-1">📞 ${h.phone || "Not available"}</p> <!-- ✅ Phone -->
+      </div>`;
+    card.addEventListener("click", () => {
+      document.getElementById("modalImg").src = h.img;
+      document.getElementById("modalName").textContent = h.name;
+      document.getElementById("modalAddress").innerText = h.address || "Address not available";
+      document.getElementById("modalRating").textContent = `⭐ ${h.rating}`;
+      
+      if (h.phone) {
+         document.getElementById("modalPhone").innerText = `📞 ${h.phone}`;
+      } else {
+          document.getElementById("modalPhone").innerText = "Phone: Not available";
+      }
+    
+      const specialtyList = document.getElementById("modalSpecialty");
+      specialtyList.innerHTML = "";
+      h.specialty.split("•").forEach(s => {
+        if (s.trim()) {
+          const li = document.createElement("li");
+          li.textContent = s.trim();
+          specialtyList.appendChild(li);
+        }
+      });
+      if (h.website) {
+        const link = document.getElementById("modalWebsite");
+        link.href = h.website;
+        link.classList.remove("hidden");
+      } else document.getElementById("modalWebsite").classList.add("hidden");
+      map.setView([h.lat, h.lon], 15);
+      document.getElementById("hospitalModal").classList.remove("hidden");
+    });
+    cardContainer.appendChild(card);
+  });
+
+
+  // --- Function to show hospital modal/details ---
+  function showHospitalModal(h) {
+    document.getElementById("modalImg").src = h.img;
+    document.getElementById("modalName").textContent = h.name;
+    document.getElementById("modalAddress").innerText = h.address || "Address not available";
+    document.getElementById("modalRating").textContent = `⭐ ${h.rating}`;
+    document.getElementById("modalPhone").innerText = h.phone ? `📞 ${h.phone}` : "Phone: Not available";
+
+    const specialtyList = document.getElementById("modalSpecialty");
+    specialtyList.innerHTML = "";
+    h.specialty.split("•").forEach(s => {
+      if (s.trim()) {
+        const li = document.createElement("li");
+        li.textContent = s.trim();
+        specialtyList.appendChild(li);
+      }
+    });
+
+    if (h.website) {
+       const link = document.getElementById("modalWebsite");
+       link.href = h.website;
+        link.classList.remove("hidden");
+    } else {
+      document.getElementById("modalWebsite").classList.add("hidden");
+    }
+
+    // Center map on hospital
+    map.setView([h.lat, h.lon], 15);
+
+   // Show modal
+    document.getElementById("hospitalModal").classList.remove("hidden");
+  }
+
+
+  // --- Modal close ---
+  document.getElementById("closeModal").addEventListener("click", () => {
+    document.getElementById("hospitalModal").classList.add("hidden");
+  });
+  document.getElementById("hospitalModal").addEventListener("click", (e) => {
+    if (e.target.id === "hospitalModal") document.getElementById("hospitalModal").classList.add("hidden");
+  });
+
+  // --- Locate User ---
+  document.getElementById("locateBtn").addEventListener("click", () => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(pos => {
+        placeUserMarker(pos.coords.latitude, pos.coords.longitude);
+      });
+    } else alert("Geolocation not supported.");
+  });
+
+  // --- Search button (Nominatim) ---
+  document.getElementById("searchBtn").addEventListener("click", () => {
+    const query = document.getElementById("locationInput").value;
+    if (!query) { 
+      alert("Please enter a location.");
+      return;
+    }
+
+    // KL + Selangor bounding box (approx lat: 2.7–3.5, lon: 100.9–102.1)
+    const viewbox = "100.9,3.5,102.1,2.7";
+    fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=MY&q=${encodeURIComponent(query)}&accept-language=en`)
+      .then(res => res.json())
+      .then(data => {
+       if (data.length > 0) {
+         saveSearch(query);
+          placeUserMarker(parseFloat(data[0].lat), parseFloat(data[0].lon));
+       } else {
+          alert("Location not found. Please try again.");
+       }
+     });
+  });
+
+  // Parse query parameters
+function getQueryParam(param) {
+    const urlParams = new URLSearchParams(window.location.search);
+    return urlParams.get(param);
+}
+
+// Get the hospital name from URL
+const selectedHospitalName = getQueryParam('hospital');
+
+// If hospital name exists, find its data and pre-fill the card
+if (selectedHospitalName) {
+    const hospitalData = hospitals.find(h => h.name === selectedHospitalName);
+    if (hospitalData) {
+        document.getElementById("modalName").textContent = hospitalData.name;
+        document.getElementById("modalAddress").textContent = hospitalData.address;
+        document.getElementById("modalRating").textContent = `⭐ ${hospitalData.rating}`;
+        document.getElementById("modalPhone").textContent = hospitalData.phone;
+        document.getElementById("modalWebsite").href = hospitalData.website;
+        document.getElementById("modalWebsite").classList.remove("hidden");
+
+        // Fill specialties
+        const specialtyList = document.getElementById("modalSpecialty");
+        specialtyList.innerHTML = '';
+        hospitalData.specialty.split("•").forEach(s => {
+            if(s.trim()) {
+                const li = document.createElement("li");
+                li.textContent = s.trim();
+                specialtyList.appendChild(li);
+            }
+        });
+
+        // Fill image
+        document.getElementById("modalImg").src = hospitalData.img;
+
+        // Optionally, scroll to hospital card
+        document.getElementById("hospitalCards").scrollIntoView({ behavior: 'smooth' });
+    }
+}
+</script>
+</body>
+</html>
+
+
+
+
+
+

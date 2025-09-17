@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>HealthSentinel - Hospital Recommender</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+
+    .glow:hover { box-shadow: 0 0 20px rgba(59,130,246,0.7); }
+
+    .spinner {
+      border: 4px solid rgba(255, 255, 255, 0.3);
+      border-top: 4px solid #2563eb;
+      border-radius: 50%;
+      width: 36px;
+      height: 36px;
+      animation: spin 1s linear infinite;
+      margin-left: 10px;
+    }
+    @keyframes spin { 0% { transform: rotate(0deg);} 100% { transform: rotate(360deg);} }
+
+    .fade-in { opacity: 0; transform: translateY(10px); animation: fadeIn 0.8s ease-out forwards; }
+    @keyframes fadeIn { to { opacity: 1; transform: translateY(0); } }
+
+    @keyframes fadeSlideUp { from { opacity: 0; transform: translateY(30px);} to { opacity: 1; transform: translateY(0);} }
+    .animate-fade-slide-up { animation: fadeSlideUp 0.9s ease-out forwards; }
+
+    .heart-animate {
+      opacity: 0;
+      animation: heartFade 1.2s ease-out forwards, heartPulse 3s ease-in-out infinite 1.2s;
+    }
+    @keyframes heartFade { to { opacity: 1; } }
+    @keyframes heartPulse { 0%,100% { transform: scale(1);} 50% { transform: scale(1.08);} }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-blue-50 via-white to-purple-50 text-gray-800 flex flex-col min-h-screen">
+
+ <!-- Navbar -->
+  <nav class="flex justify-between items-center px-8 py-6 bg-white/80 backdrop-blur-md shadow-md sticky top-0 z-50">
+    <div class="text-2xl font-bold text-blue-700">HealthSentinel</div>
+    <div class="space-x-6">
+      <a href="#features" class="hover:text-blue-700 transition">Features</a>
+      <a href="#recommend" class="hover:text-blue-700 transition">Recommend</a>
+      <a href="{{ url_for('insurance') }}" class="hover:text-blue-700 transition">Insurance</a>
+      <a href="#about" class="hover:text-blue-700 transition">About</a>
+      <a href="#contact" class="hover:text-blue-700 transition">Contact</a>
+
+      {% if 'user' in session %}
+        <span class="text-blue-700 font-semibold">Hi, {{ session['user'] }}</span>
+        <a href="{{ url_for('logout_route') }}" 
+           class="hover:text-red-600 transition">Logout</a>
+      {% else %}
+        <a href="{{ url_for('login_route') }}" 
+           class="hover:text-blue-700 transition">Login</a>
+      {% endif %}
+    </div>
+  </nav>
+
+<!-- Hero -->
+  <header class="text-center py-24 px-6 bg-gradient-to-r from-blue-700 to-purple-700 text-white">
+    <h1 class="text-5xl md:text-6xl font-extrabold mb-4 drop-shadow-lg opacity-0 animate-fade-slide-up">
+      Find the Right Hospital with AI
+    </h1>
+    <p class="text-lg md:text-xl mb-8 max-w-3xl mx-auto opacity-0 animate-fade-slide-up" style="animation-delay:.15s">
+      Analyze reviews and discover trusted hospitals in Kuala Lumpur, recommended just for you.
+    </p>
+
+    <div class="flex justify-center gap-4 opacity-0 animate-fade-slide-up" style="animation-delay:.3s">
+      <a href="#recommend" 
+         class="glow bg-white text-blue-700 px-8 py-4 rounded-full font-semibold hover:bg-gray-100 transition">
+         Get Started
+      </a>
+      <a href="hospital-info" 
+         class="glow border-2 border-white text-white px-8 py-4 rounded-full font-semibold hover:bg-white hover:text-blue-700 transition">
+         Private Hospitals Info
+      </a>
+    </div>
+
+    <div class="mt-10 flex justify-center">
+      <img
+        src="https://cdn-icons-png.flaticon.com/512/2966/2966327.png"
+        alt="Heart hands"
+        class="w-20 md:w-24 heart-animate pointer-events-none select-none"
+        loading="eager"
+      />
+    </div>
+  </header>
+
+  <!-- Recommend -->
+  <section id="recommend" class="py-20 px-8">
+    <h2 class="text-4xl font-bold text-center text-blue-700 mb-8">🔍 Search by Keyword & Get Suggestions</h2>
+    <div class="max-w-3xl mx-auto bg-white rounded-2xl p-10 shadow-xl border border-gray-100">
+      <form id="recommendForm" method="POST" action="{{ url_for('index') }}">
+        <label for="keywords" class="block text-lg font-medium mb-2">Enter your keyword:</label>
+        <input type="text" id="keywords" name="keywords"
+               value="{{ keywords or '' }}"
+               class="w-full border border-gray-300 rounded-xl p-4 focus:outline-none focus:ring-2 focus:ring-blue-400 mb-4"
+               placeholder="e.g. clean, doctor, staff" required>
+        <button type="submit" id="submitBtn" class="w-full glow bg-blue-700 text-white py-3 rounded-xl font-semibold hover:bg-blue-800 transition flex justify-center items-center">
+          <span id="btnText">Analyze & Recommend</span>
+          <div id="spinner" class="hidden spinner"></div>
+        </button>
+      </form>
+
+      {% if keywords %}
+      <div id="resultSection" class="mt-10 space-y-6 fade-in">
+        <h3 class="text-2xl font-semibold text-green-600">Results for "{{ keywords }}":</h3>
+        {% if prediction %}
+        <div class="grid gap-6">
+          {% for hospital in prediction %}
+          <div class="p-6 border rounded-lg shadow-md bg-gradient-to-r from-blue-50 to-purple-50 hover:shadow-xl transition fade-in">
+            <h4 class="text-xl font-bold text-blue-800">{{ hospital.hospital }}</h4>
+            <p class="text-sm text-gray-600">Mentions: {{ hospital.count }}</p>
+            {% if hospital.xai %}
+            <p class="mt-3 bg-white border-l-4 border-purple-500 rounded-md p-4 text-purple-800 shadow-sm">
+               {{ hospital.xai }}
+            </p>
+            {% else %}
+            <p class="mt-3 text-gray-600"> No explanation available.</p>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+          <p class="text-red-500 font-medium fade-in"> No hospitals found matching your keyword.</p>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+  </section>
+
+  <!-- How It Works -->
+  <section id="features" class="py-20 px-8 bg-gradient-to-br from-blue-50 to-purple-50">
+    <h2 class="text-4xl font-bold text-center text-blue-700 mb-16">⚙️ How It Works</h2>
+    <div class="relative max-w-4xl mx-auto">
+      <div class="absolute left-1/2 transform -translate-x-1/2 h-full w-1 bg-blue-200"></div>
+      <div class="space-y-12">
+        <div class="relative flex items-center">
+          <div class="bg-blue-700 text-white rounded-full p-4 z-10">📝</div>
+          <div class="ml-6 bg-white p-6 rounded-xl shadow-md w-full fade-in">
+            <h3 class="text-xl font-semibold">Submit a Review</h3>
+            <p class="text-gray-600">Tell us about your hospital experience.</p>
+          </div>
+        </div>
+        <div class="relative flex items-center justify-end">
+          <div class="mr-6 bg-white p-6 rounded-xl shadow-md w-full text-right fade-in">
+            <h3 class="text-xl font-semibold">AI Analyzes Your Feedback 🤖</h3>
+            <p class="text-gray-600">We use Word2Vec & ML to understand your review.</p>
+          </div>
+          <div class="bg-purple-700 text-white rounded-full p-4 z-10">🤖</div>
+        </div>
+        <div class="relative flex items-center">
+          <div class="bg-green-600 text-white rounded-full p-4 z-10">🏥</div>
+          <div class="ml-6 bg-white p-6 rounded-xl shadow-md w-full fade-in">
+            <h3 class="text-xl font-semibold">Get Suggested Hospitals</h3>
+            <p class="text-gray-600">Receive personalized private hospital recommendations in KL.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+    <!-- About Section -->
+  <section id="about" class="py-24 px-8 bg-white relative overflow-hidden">
+    <div class="absolute top-0 left-0 w-40 h-40 bg-blue-100 rounded-full mix-blend-multiply filter blur-2xl opacity-60 animate-pulse"></div>
+    <div class="absolute bottom-0 right-0 w-64 h-64 bg-purple-100 rounded-full mix-blend-multiply filter blur-3xl opacity-60 animate-pulse"></div>
+
+    <div class="relative max-w-6xl mx-auto text-center">
+      <h2 class="text-4xl md:text-5xl font-extrabold text-blue-700 mb-8">🌟 About This Project</h2>
+      <p class="text-lg md:text-xl text-gray-700 max-w-3xl mx-auto leading-relaxed mb-12">
+        HealthSentinel is my <span class="font-semibold text-blue-700">Final Year Project</span>, created to make 
+        <span class="font-semibold text-purple-700">healthcare choices easier</span> for patients in Kuala Lumpur.  
+        Many people struggle to choose the right private hospital — so I built a system powered by 
+        <span class="font-semibold">Machine Learning (ML)</span> to analyze <span class="font-semibold">Google Reviews</span> 
+        and recommend hospitals tailored to patient preferences.
+      </p>
+
+      <div class="grid md:grid-cols-3 gap-8">
+        <div class="bg-gradient-to-br from-blue-50 to-purple-50 p-8 rounded-2xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1">
+          <div class="text-5xl mb-4">🧠</div>
+          <h3 class="text-xl font-bold mb-2 text-blue-800">AI + Word2Vec</h3>
+          <p class="text-gray-600">I used Word2Vec to convert reviews into numbers, helping ML models understand text effectively.</p>
+        </div>
+
+        <div class="bg-gradient-to-br from-purple-50 to-pink-50 p-8 rounded-2xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1">
+          <div class="text-5xl mb-4">⚖️</div>
+          <h3 class="text-xl font-bold mb-2 text-purple-800">Model Evaluation</h3>
+          <p class="text-gray-600">I compared Random Forest, SVM, and Logistic Regression. After testing, 
+            <span class="font-semibold text-green-600">Logistic Regression</span> gave the best results.</p>
+        </div>
+
+        <div class="bg-gradient-to-br from-green-50 to-blue-50 p-8 rounded-2xl shadow-md hover:shadow-xl transition transform hover:-translate-y-1">
+          <div class="text-5xl mb-4">🏥</div>
+          <h3 class="text-xl font-bold mb-2 text-green-800">Personalized Results</h3>
+          <p class="text-gray-600">The system recommends the most suitable private hospitals in KL, tailored to your needs and preferences.</p>
+        </div>
+      </div>
+
+      <p class="mt-16 text-gray-700 text-lg md:text-xl max-w-3xl mx-auto leading-relaxed">
+        This project is not just about code — it’s about 
+        <span class="font-semibold text-blue-700">using AI to improve lives</span>.  
+        By transforming raw feedback into meaningful insights, HealthSentinel aims to guide patients 
+        towards better, more informed healthcare decisions. 💙
+      </p>
+
+      <!-- Back to Home Button -->
+      <div class="mt-12">
+        <a href="#"
+           class="glow bg-blue-700 text-white px-8 py-4 rounded-full font-semibold hover:bg-blue-800 transition">
+           ⬅ Back to Home
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer id="contact" class="mt-auto py-10 bg-gradient-to-r from-blue-800 to-purple-800 text-white text-center">
+    <p>&copy; 2025 HealthSentinel | Final Year Project by Bernard Goh</p>
+    <p class="text-sm mt-2">Need help? <a href="mailto:bernardgoh0912@1utar.my" class="underline hover:text-gray-300">Contact Us</a></p>
+  </footer>
+
+  <!-- Floating Back to Top Button -->
+  <button id="backToTop" 
+          class="fixed bottom-6 right-6 bg-blue-700 text-white p-4 rounded-full shadow-lg hover:bg-blue-800 transition hidden">
+    ⬆
+  </button>
+
+  <!-- Script for Spinner -->
+  <script>
+    const form = document.getElementById('recommendForm');
+    const submitBtn = document.getElementById('submitBtn');
+    const btnText = document.getElementById('btnText');
+    const spinner = document.getElementById('spinner');
+
+    form.addEventListener('submit', function() {
+      btnText.textContent = "Analyzing...";
+      spinner.classList.remove('hidden');
+      submitBtn.disabled = true;
+    });
+
+    // Back to Top functionality
+    const backToTopBtn = document.getElementById('backToTop');
+    window.addEventListener('scroll', () => {
+      if (window.scrollY > 300) {
+        backToTopBtn.classList.remove('hidden');
+      } else {
+        backToTopBtn.classList.add('hidden');
+      }
+    });
+    backToTopBtn.addEventListener('click', () => {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  </script>
+
+</body>
+</html>
